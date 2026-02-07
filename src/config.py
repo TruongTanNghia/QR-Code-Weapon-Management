@@ -2,18 +2,31 @@
 Configuration settings for VKTBKT Management System
 """
 import os
+import sys
 from pathlib import Path
 
-# Base directories
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
-ASSETS_DIR = BASE_DIR / "assets"
+# --- CẤU HÌNH ĐƯỜNG DẪN THÔNG MINH (CHO CẢ CODE VÀ EXE) ---
+if getattr(sys, 'frozen', False):
+    # TRƯỜNG HỢP 1: Chạy từ file .exe (Đã build)
+    # INTERNAL_DIR: Đường dẫn tạm thời chứa code và assets (đã được giải nén ngầm)
+    INTERNAL_DIR = Path(sys._MEIPASS)
+    
+    # EXTERNAL_DIR: Đường dẫn chứa file .exe đang chạy (Để lưu Database)
+    EXTERNAL_DIR = Path(sys.executable).parent
+else:
+    # TRƯỜNG HỢP 2: Chạy code Python bình thường
+    INTERNAL_DIR = Path(__file__).resolve().parent.parent
+    EXTERNAL_DIR = INTERNAL_DIR
+
+# Định nghĩa các thư mục dựa trên logic trên
+ASSETS_DIR = INTERNAL_DIR / "assets"
+DATA_DIR = EXTERNAL_DIR / "data"
 
 # Database configuration
 DATABASE_PATH = DATA_DIR / "vktbkt.db"
 
-# Ensure data directory exists
-DATA_DIR.mkdir(exist_ok=True)
+# Ensure data directory exists (Tạo thư mục data nếu chưa có)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # Application settings
 APP_NAME = "Quản lý VKTBKT"

@@ -5,18 +5,20 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QTableWidget, QTableWidgetItem,
     QHeaderView, QLineEdit, QComboBox, QFrame,
-    QMessageBox, QMenu, QFileDialog, QAbstractItemView
+    QMessageBox, QMenu, QFileDialog, QAbstractItemView,
+    QDateEdit, QCheckBox # [MỚI] Import
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QFont, QAction, QPixmap, QImage, QColor
 from datetime import datetime
 
 from ..models.equipment import Equipment
 from ..models.maintenance_log import MaintenanceLog
+from ..models.category import Category
 from ..controllers.maintenance_controller import MaintenanceController
 from ..services.qr_service import QRService
 from ..services.export_service import ExportService
-from ..config import EQUIPMENT_STATUS, EQUIPMENT_CATEGORIES
+from ..config import EQUIPMENT_STATUS
 from .input_dialog import EquipmentInputDialog
 from .maintenance_dialog import MaintenanceDialog
 from .equipment_detail_dialog import EquipmentDetailDialog
@@ -45,7 +47,7 @@ class EquipmentView(QWidget):
         layout.setContentsMargins(30, 30, 30, 30)
         layout.setSpacing(20)
         
-        # Thêm Style riêng cho nút phân trang
+        # Style cho nút phân trang
         self.setStyleSheet(self.styleSheet() + """
             QPushButton#pagingBtn {
                 background-color: palette(base);
@@ -86,47 +88,76 @@ class EquipmentView(QWidget):
         
         layout.addLayout(header_layout)
         
-        # Search and filter bar
+        # --- SEARCH AND FILTER BAR (Cải tiến) ---
         filter_frame = QFrame()
         filter_frame.setObjectName("card")
-        filter_layout = QHBoxLayout(filter_frame)
-        filter_layout.setContentsMargins(15, 15, 15, 15)
-        filter_layout.setSpacing(15)
         
-        # Search input
+        # Đổi thành Vertical Layout để chứa 2 dòng
+        filter_layout = QVBoxLayout(filter_frame)
+        filter_layout.setContentsMargins(15, 15, 15, 15)
+        filter_layout.setSpacing(10)
+        
+        # [DÒNG 1] Tìm kiếm, Loại, Tình trạng
+        row1_layout = QHBoxLayout()
+        
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("🔍 Tìm kiếm theo tên, số hiệu...")
         self.search_input.textChanged.connect(self._on_search)
-        self.search_input.setMinimumWidth(300)
-        filter_layout.addWidget(self.search_input)
+        self.search_input.setMinimumWidth(250)
+        row1_layout.addWidget(self.search_input)
         
-        # Category filter
-        filter_layout.addWidget(QLabel("Loại:"))
+        row1_layout.addWidget(QLabel("Loại:"))
         self.category_filter = QComboBox()
         self.category_filter.addItem("Tất cả", None)
-        for cat in EQUIPMENT_CATEGORIES:
-            self.category_filter.addItem(cat, cat)
         self.category_filter.currentIndexChanged.connect(self._on_filter_change)
-        filter_layout.addWidget(self.category_filter)
+        row1_layout.addWidget(self.category_filter)
         
-        # Status filter
-        filter_layout.addWidget(QLabel("Tình trạng:"))
+        row1_layout.addWidget(QLabel("Tình trạng:"))
         self.status_filter = QComboBox()
         self.status_filter.addItem("Tất cả", None)
         for status in EQUIPMENT_STATUS:
             self.status_filter.addItem(status, status)
         self.status_filter.currentIndexChanged.connect(self._on_filter_change)
-        filter_layout.addWidget(self.status_filter)
+        row1_layout.addWidget(self.status_filter)
         
-        filter_layout.addStretch()
+        row1_layout.addStretch()
+        filter_layout.addLayout(row1_layout)
         
-        # Refresh button
+        # [DÒNG 2] Lọc theo ngày, Làm mới
+        row2_layout = QHBoxLayout()
+        
+        self.date_filter_check = QCheckBox("Lọc theo ngày cấp phát:")
+        self.date_filter_check.toggled.connect(self._on_date_filter_toggle)
+        row2_layout.addWidget(self.date_filter_check)
+        
+        self.from_date = QDateEdit()
+        self.from_date.setCalendarPopup(True)
+        self.from_date.setDisplayFormat("dd/MM/yyyy")
+        self.from_date.setDate(QDate.currentDate().addDays(-365)) # Mặc định 1 năm trước
+        self.from_date.setEnabled(False)
+        self.from_date.dateChanged.connect(self.refresh_data)
+        row2_layout.addWidget(QLabel("Từ:"))
+        row2_layout.addWidget(self.from_date)
+        
+        self.to_date = QDateEdit()
+        self.to_date.setCalendarPopup(True)
+        self.to_date.setDisplayFormat("dd/MM/yyyy")
+        self.to_date.setDate(QDate.currentDate())
+        self.to_date.setEnabled(False)
+        self.to_date.dateChanged.connect(self.refresh_data)
+        row2_layout.addWidget(QLabel("Đến:"))
+        row2_layout.addWidget(self.to_date)
+        
+        row2_layout.addStretch()
+        
         refresh_btn = QPushButton("⟳ Làm mới")
         refresh_btn.setToolTip("Làm mới danh sách")
         refresh_btn.setObjectName("secondary")
         refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         refresh_btn.clicked.connect(self.refresh_data)
-        filter_layout.addWidget(refresh_btn)
+        row2_layout.addWidget(refresh_btn)
+        
+        filter_layout.addLayout(row2_layout)
         
         layout.addWidget(filter_frame)
         
@@ -135,7 +166,7 @@ class EquipmentView(QWidget):
         self.table.setColumnCount(8)
         self.table.setHorizontalHeaderLabels([
             "ID", "Tên thiết bị", "Số hiệu", "Loại", 
-            "Năm SX", "Tình trạng", "Đơn vị", "Thao tác"
+            "Năm SX", "Tình trạng", "Ngày cấp", "Thao tác" # [FIX] Đổi "Đơn vị" -> "Ngày cấp"
         ])
         
         # Configure table
@@ -154,7 +185,7 @@ class EquipmentView(QWidget):
         self.table.setColumnWidth(3, 140)
         self.table.setColumnWidth(4, 80)
         self.table.setColumnWidth(5, 120)
-        self.table.setColumnWidth(6, 120)
+        self.table.setColumnWidth(6, 120) # [FIX] Cột ngày cấp
         self.table.setColumnWidth(7, 230)
         
         self.table.verticalHeader().setVisible(False)
@@ -230,16 +261,46 @@ class EquipmentView(QWidget):
         
         layout.addLayout(pagination_layout)
         
-        # Load initial data
-        self.refresh_data()
+        # Initial load will happen in showEvent
     
+    def _on_date_filter_toggle(self, checked):
+        """[MỚI] Toggle date filter controls"""
+        self.from_date.setEnabled(checked)
+        self.to_date.setEnabled(checked)
+        self.refresh_data()
+
+    def _load_categories(self):
+        """Load danh sách loại trang bị từ Database"""
+        current_data = self.category_filter.currentData()
+        self.category_filter.blockSignals(True)
+        self.category_filter.clear()
+        self.category_filter.addItem("Tất cả", None)
+        
+        categories = Category.get_all()
+        for cat in categories:
+            self.category_filter.addItem(cat.name, cat.name)
+            
+        if current_data:
+            index = self.category_filter.findData(current_data)
+            if index >= 0:
+                self.category_filter.setCurrentIndex(index)
+                
+        self.category_filter.blockSignals(False)
+
     def refresh_data(self):
         """Refresh equipment list from database"""
         keyword = self.search_input.text().strip()
         category = self.category_filter.currentData()
         status = self.status_filter.currentData()
         
-        if keyword:
+        # [MỚI] Logic lọc kết hợp
+        if self.date_filter_check.isChecked():
+            from_dt = self.from_date.date().toPyDate()
+            to_dt = self.to_date.date().toPyDate()
+            from_datetime = datetime.combine(from_dt, datetime.min.time())
+            to_datetime = datetime.combine(to_dt, datetime.max.time())
+            equipment_list = Equipment.get_by_date_range(from_datetime, to_datetime)
+        elif keyword:
             equipment_list = Equipment.search(keyword)
         elif category:
             equipment_list = Equipment.get_by_category(category)
@@ -248,17 +309,41 @@ class EquipmentView(QWidget):
         else:
             equipment_list = Equipment.get_all(limit=500)
         
-        if keyword and category:
-            equipment_list = [e for e in equipment_list if e.category == category]
-        if keyword and status:
-            equipment_list = [e for e in equipment_list if e.status == status]
-        if category and status and not keyword:
-            equipment_list = [e for e in equipment_list if e.status == status]
+        # Apply secondary filters in memory (Python list filtering)
+        # Nếu đã lọc theo ngày, tiếp tục lọc theo các tiêu chí khác nếu có
+        if self.date_filter_check.isChecked():
+            if keyword:
+                k = keyword.lower()
+                equipment_list = [e for e in equipment_list if k in e.name.lower() or k in e.serial_number.lower()]
+            if category:
+                equipment_list = [e for e in equipment_list if e.category == category]
+            if status:
+                equipment_list = [e for e in equipment_list if e.status == status]
+        else:
+            # Logic cũ cho các trường hợp khác
+            if keyword and category:
+                equipment_list = [e for e in equipment_list if e.category == category]
+            if keyword and status:
+                equipment_list = [e for e in equipment_list if e.status == status]
+            if category and status and not keyword:
+                equipment_list = [e for e in equipment_list if e.status == status]
         
         self.current_equipment_list = equipment_list
         self.current_page = 1
         self._update_pagination()
     
+    # [MỚI] Hàm format ngày hiển thị
+    def _format_date(self, date_val):
+        if not date_val: return "-"
+        if hasattr(date_val, 'strftime'): return date_val.strftime("%d/%m/%Y")
+        s = str(date_val)[:10]
+        try:
+            if "-" in s:
+                p = s.split("-")
+                return f"{p[2]}/{p[1]}/{p[0]}"
+        except: pass
+        return s
+
     def _populate_table(self, equipment_list: list):
         """Populate table with equipment data"""
         self.table.setRowCount(len(equipment_list))
@@ -289,8 +374,11 @@ class EquipmentView(QWidget):
                 status_item.setForeground(QColor("#F44336"))
             self.table.setItem(row, 5, status_item)
             
-            unit_display = equip.unit_name if equip.unit_name else "-"
-            self.table.setItem(row, 6, QTableWidgetItem(unit_display))
+            # [FIX] Hiển thị Ngày cấp phát thay vì Đơn vị
+            date_str = self._format_date(equip.receive_date)
+            date_item = QTableWidgetItem(date_str)
+            date_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(row, 6, date_item)
             
             # --- ACTION BUTTONS ---
             action_widget = QWidget()
@@ -522,16 +610,14 @@ class EquipmentView(QWidget):
         dialog.exec()
     
     def export_equipment_list(self):
-        """[FIX] Cho phép người dùng chọn nơi lưu file"""
+        """Cho phép người dùng chọn nơi lưu file"""
         if not self.current_equipment_list:
             QMessageBox.warning(self, "Thông báo", "Không có dữ liệu để xuất!")
             return
             
-        # Tạo tên file gợi ý
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         default_name = f"danh_sach_thiet_bi_{timestamp}.pdf"
         
-        # Mở hộp thoại Save As
         filename, _ = QFileDialog.getSaveFileName(
             self,
             "Lưu danh sách thiết bị",
@@ -543,7 +629,7 @@ class EquipmentView(QWidget):
             try:
                 filepath = self.export_service.export_equipment_list(
                     self.current_equipment_list,
-                    save_path=filename # Truyền đường dẫn vào service
+                    save_path=filename
                 )
                 reply = QMessageBox.information(
                     self, "Thành công",
@@ -557,16 +643,14 @@ class EquipmentView(QWidget):
                 QMessageBox.critical(self, "Lỗi", f"Không thể xuất file: {str(e)}")
     
     def export_qr_sheet(self):
-        """[FIX] Cho phép người dùng chọn nơi lưu file QR"""
+        """Cho phép người dùng chọn nơi lưu file QR"""
         if not self.current_equipment_list:
             QMessageBox.warning(self, "Thông báo", "Không có dữ liệu để xuất!")
             return
             
-        # Tạo tên file gợi ý
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         default_name = f"bang_ma_qr_{timestamp}.pdf"
         
-        # Mở hộp thoại Save As
         filename, _ = QFileDialog.getSaveFileName(
             self,
             "Lưu bảng mã QR",
@@ -590,3 +674,9 @@ class EquipmentView(QWidget):
                     os.startfile(filepath)
             except Exception as e:
                 QMessageBox.critical(self, "Lỗi", f"Không thể xuất file: {str(e)}")
+    
+    def showEvent(self, event):
+        """Load lại danh mục mỗi khi vào view"""
+        super().showEvent(event)
+        self._load_categories()
+        self.refresh_data()

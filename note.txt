@@ -1,0 +1,2 @@
+Cài thư viện để build: pip install pyinstaller
+Lệnh  build: pyinstaller --noconsole --onefile --name="QuanLyVKTBKT" --icon="assets/logo.ico" --add-data "assets;assets" --collect-all "pyzbar" main.py

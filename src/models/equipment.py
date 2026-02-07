@@ -91,7 +91,6 @@ class Equipment:
     def get_by_id(cls, equipment_id: int) -> Optional['Equipment']:
         """Get equipment by ID"""
         db = Database()
-        # [FIX] Thêm LEFT JOIN để lấy tên đơn vị (unit_name)
         row = db.fetch_one('''
             SELECT e.*, u.name as unit_name 
             FROM equipment e 
@@ -176,6 +175,19 @@ class Equipment:
         ''', (unit_id,))
         return [cls._from_row(row) for row in rows]
     
+    @classmethod
+    def get_by_date_range(cls, start_date: datetime, end_date: datetime) -> List['Equipment']:
+        """[MỚI] Get equipment by receive date range"""
+        db = Database()
+        rows = db.fetch_all('''
+            SELECT e.*, u.name as unit_name 
+            FROM equipment e 
+            LEFT JOIN units u ON e.unit_id = u.id 
+            WHERE e.receive_date BETWEEN ? AND ?
+            ORDER BY e.receive_date DESC
+        ''', (start_date, end_date))
+        return [cls._from_row(row) for row in rows]
+
     @classmethod
     def get_by_loan_status(cls, loan_status: str) -> List['Equipment']:
         """Get equipment by loan status"""
