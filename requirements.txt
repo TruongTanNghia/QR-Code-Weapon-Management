@@ -1,0 +1,19 @@
+# Quản lý VKTBKT - Dependencies
+# Python 3.10+
+
+# GUI Framework
+PyQt6>=6.6.0
+
+# QR Code Generation & Scanning
+qrcode[pil]>=7.4.2
+pyzbar>=0.1.9
+Pillow>=10.0.0
+
+# Camera/Video Processing
+opencv-python>=4.8.0
+
+# PDF Report Generation
+reportlab>=4.0.0
+
+# Database (SQLite is built-in, but we need this for better datetime handling)
+python-dateutil>=2.8.2
