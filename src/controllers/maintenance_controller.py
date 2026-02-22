@@ -5,12 +5,24 @@ from typing import List, Optional, Tuple
 from datetime import datetime
 from ..models.equipment import Equipment
 from ..models.maintenance_log import MaintenanceLog
+from ..models.database import Database # [MỚI] Import DB để ghi log
+from .user_controller import UserController # [MỚI] Import để lấy user hiện tại
 
 
 class MaintenanceController:
     """
     Controller handling maintenance log business logic
     """
+    
+    def __init__(self):
+        self.db = Database() # [MỚI] Khởi tạo kết nối DB
+        
+    def _get_current_user_info(self):
+        """[MỚI] Hàm tiện ích lấy thông tin người dùng đang thao tác"""
+        user = UserController.get_current_user()
+        if user:
+            return user.id, user.username
+        return None, "Hệ thống"
     
     def create_maintenance_log(
         self, 
@@ -59,6 +71,11 @@ class MaintenanceController:
                 equipment.status = update_equipment_status
                 equipment.save()
             
+            # [QUAN TRỌNG] Ghi nhật ký (Audit Log)
+            user_id, username = self._get_current_user_info()
+            log_details = f"Thêm lịch bảo dưỡng: '{log.maintenance_type}' cho thiết bị '{equipment.name}' (ID: {equipment_id})"
+            self.db.log_action(user_id, username, "CREATE", "Maintenance", log.id, log_details)
+            
             return True, "Đã ghi nhật ký bảo dưỡng!", log
             
         except Exception as e:
@@ -69,7 +86,7 @@ class MaintenanceController:
         self, 
         log_id: int, 
         log_data: dict, 
-        update_equipment_status: str = None # [FIX] Thêm tham số này
+        update_equipment_status: str = None
     ) -> Tuple[bool, str]:
         """
         Update existing maintenance log
@@ -90,12 +107,17 @@ class MaintenanceController:
             
             log.save()
             
-            # [FIX] Logic cập nhật trạng thái thiết bị (Giống hàm create)
+            # Logic cập nhật trạng thái thiết bị
             if update_equipment_status:
                 equipment = Equipment.get_by_id(log.equipment_id)
                 if equipment:
                     equipment.status = update_equipment_status
                     equipment.save()
+            
+            # [QUAN TRỌNG] Ghi nhật ký (Audit Log)
+            user_id, username = self._get_current_user_info()
+            log_details = f"Cập nhật lịch bảo dưỡng ID {log_id} (Loại: {log.maintenance_type})"
+            self.db.log_action(user_id, username, "UPDATE", "Maintenance", log_id, log_details)
             
             return True, "Đã cập nhật bản ghi!"
             
@@ -124,6 +146,11 @@ class MaintenanceController:
                     equipment.status = update_equipment_status
                     equipment.save()
             
+            # [QUAN TRỌNG] Ghi nhật ký (Audit Log)
+            user_id, username = self._get_current_user_info()
+            log_details = f"Hoàn thành bảo dưỡng ID {log_id}"
+            self.db.log_action(user_id, username, "UPDATE", "Maintenance", log_id, log_details)
+            
             return True, "Đã hoàn thành công việc bảo dưỡng!"
             
         except Exception as e:
@@ -136,7 +163,16 @@ class MaintenanceController:
             return False, "Không tìm thấy bản ghi!"
         
         try:
+            log_type = log.maintenance_type
+            equip_id = log.equipment_id
+            
             log.delete()
+            
+            # [QUAN TRỌNG] Ghi nhật ký (Audit Log)
+            user_id, username = self._get_current_user_info()
+            log_details = f"Xóa lịch bảo dưỡng ID {log_id} (Loại: {log_type}, Thiết bị ID: {equip_id})"
+            self.db.log_action(user_id, username, "DELETE", "Maintenance", log_id, log_details)
+            
             return True, "Đã xóa bản ghi!"
         except Exception as e:
             return False, f"Lỗi: {str(e)}"

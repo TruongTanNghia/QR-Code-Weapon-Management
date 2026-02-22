@@ -15,7 +15,9 @@ from datetime import datetime
 from ..models.equipment import Equipment
 from ..models.maintenance_log import MaintenanceLog
 from ..models.category import Category
+from ..models.database import Database
 from ..controllers.maintenance_controller import MaintenanceController
+from ..controllers.user_controller import UserController
 from ..services.qr_service import QRService
 from ..services.export_service import ExportService
 from ..config import EQUIPMENT_STATUS
@@ -35,6 +37,7 @@ class EquipmentView(QWidget):
         self.qr_service = QRService()
         self.export_service = ExportService()
         self.maintenance_controller = MaintenanceController()
+        self.db = Database()
         self.current_equipment_list = []
         self.current_page = 1
         self.page_size = 10
@@ -504,6 +507,13 @@ class EquipmentView(QWidget):
         elif action == action_delete:
             self._delete_equipment(equipment_id)
     
+    def _get_current_user_info(self):
+        """Lấy thông tin người dùng hiện tại để ghi audit log"""
+        user = UserController.get_current_user()
+        if user:
+            return user.id, user.username
+        return None, "Hệ thống"
+
     def show_add_dialog(self):
         dialog = EquipmentInputDialog(self)
         if dialog.exec():
@@ -512,6 +522,11 @@ class EquipmentView(QWidget):
             qr_img, qr_path = self.qr_service.generate_equipment_qr(equipment.id, equipment.serial_number)
             equipment.qr_code_path = qr_path
             equipment.save()
+            
+            # Ghi nhật ký hệ thống
+            user_id, username = self._get_current_user_info()
+            self.db.log_action(user_id, username, "CREATE", "Equipment", equipment.id,
+                f"Thêm mới trang bị: {equipment.name} (Số hiệu: {equipment.serial_number}, Loại: {equipment.category})")
             
             QMessageBox.information(self, "Thành công", f"Đã thêm thiết bị '{equipment.name}' và tạo mã QR!")
             self.refresh_data()
@@ -522,12 +537,23 @@ class EquipmentView(QWidget):
             QMessageBox.warning(self, "Lỗi", "Không tìm thấy thiết bị!")
             return
         
+        old_name = equipment.name
+        old_serial = equipment.serial_number
+        
         dialog = EquipmentInputDialog(self, equipment)
         if dialog.exec():
             updated = dialog.get_equipment()
             updated.id = equipment_id
             updated.qr_code_path = equipment.qr_code_path
             updated.save()
+            
+            # Ghi nhật ký hệ thống
+            user_id, username = self._get_current_user_info()
+            log_details = f"Cập nhật trang bị: {updated.name} (Số hiệu: {updated.serial_number})"
+            if updated.serial_number != old_serial:
+                log_details += f" [Đổi số hiệu từ {old_serial} sang {updated.serial_number}]"
+            self.db.log_action(user_id, username, "UPDATE", "Equipment", equipment_id, log_details)
+            
             QMessageBox.information(self, "Thành công", f"Đã cập nhật thiết bị '{updated.name}'!")
             self.refresh_data()
     
@@ -543,9 +569,17 @@ class EquipmentView(QWidget):
         )
         
         if reply == QMessageBox.StandardButton.Yes:
+            name = equipment.name
+            serial = equipment.serial_number
             self.qr_service.delete_qr(equipment.id, equipment.serial_number)
             equipment.delete()
-            QMessageBox.information(self, "Thành công", f"Đã xóa thiết bị '{equipment.name}'!")
+            
+            # Ghi nhật ký hệ thống
+            user_id, username = self._get_current_user_info()
+            self.db.log_action(user_id, username, "DELETE", "Equipment", equipment_id,
+                f"Xóa trang bị: {name} (Số hiệu: {serial})")
+            
+            QMessageBox.information(self, "Thành công", f"Đã xóa thiết bị '{name}'!")
             self.refresh_data()
     
     def _show_qr(self, equipment: Equipment):

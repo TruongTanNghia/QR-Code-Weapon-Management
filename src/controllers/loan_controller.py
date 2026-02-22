@@ -5,12 +5,24 @@ from typing import List, Optional, Tuple
 from datetime import datetime
 from ..models.equipment import Equipment
 from ..models.loan_log import LoanLog
+from ..models.database import Database # [MỚI] Import DB để ghi log
+from .user_controller import UserController # [MỚI] Import để lấy user hiện tại
 
 
 class LoanController:
     """
     Controller handling equipment loan business logic
     """
+    
+    def __init__(self):
+        self.db = Database() # [MỚI] Khởi tạo kết nối DB
+        
+    def _get_current_user_info(self):
+        """[MỚI] Hàm tiện ích lấy thông tin người dùng đang thao tác"""
+        user = UserController.get_current_user()
+        if user:
+            return user.id, user.username
+        return None, "Hệ thống"
     
     def create_loan(
         self, 
@@ -63,6 +75,11 @@ class LoanController:
             # Update equipment loan_status to "Đã cho mượn"
             equipment.update_loan_status("Đã cho mượn")
             
+            # [QUAN TRỌNG] Ghi nhật ký (Audit Log)
+            user_id, username = self._get_current_user_info()
+            log_details = f"Tạo phiếu mượn cho thiết bị '{equipment.name}' (ID: {equipment_id}). Đơn vị mượn: {loan.borrower_unit}"
+            self.db.log_action(user_id, username, "CREATE", "Loan", loan.id, log_details)
+            
             return True, "Đã tạo phiếu cho mượn thiết bị!", loan
             
         except Exception as e:
@@ -85,6 +102,11 @@ class LoanController:
                 loan.expected_return_date = loan_data['expected_return_date']
             
             loan.save()
+            
+            # [QUAN TRỌNG] Ghi nhật ký (Audit Log)
+            user_id, username = self._get_current_user_info()
+            log_details = f"Cập nhật phiếu mượn ID {loan_id}. Đơn vị mượn: {loan.borrower_unit}"
+            self.db.log_action(user_id, username, "UPDATE", "Loan", loan_id, log_details)
             
             return True, "Đã cập nhật thông tin cho mượn!"
             
@@ -121,6 +143,12 @@ class LoanController:
             if equipment:
                 equipment.update_loan_status("Đang ở kho")
             
+            # [QUAN TRỌNG] Ghi nhật ký (Audit Log)
+            user_id, username = self._get_current_user_info()
+            equip_name = equipment.name if equipment else f"ID {loan.equipment_id}"
+            log_details = f"Ghi nhận trả thiết bị '{equip_name}' cho phiếu mượn ID {loan_id}"
+            self.db.log_action(user_id, username, "UPDATE", "Loan", loan_id, log_details)
+            
             return True, "Đã ghi nhận trả thiết bị!"
             
         except Exception as e:
@@ -140,7 +168,16 @@ class LoanController:
                 if equipment:
                     equipment.update_loan_status("Đang ở kho")
             
+            borrower_unit = loan.borrower_unit
+            equip_id = loan.equipment_id
+            
             loan.delete()
+            
+            # [QUAN TRỌNG] Ghi nhật ký (Audit Log)
+            user_id, username = self._get_current_user_info()
+            log_details = f"Xóa phiếu mượn ID {loan_id} (Đơn vị mượn: {borrower_unit}, Thiết bị ID: {equip_id})"
+            self.db.log_action(user_id, username, "DELETE", "Loan", loan_id, log_details)
+            
             return True, "Đã xóa bản ghi!"
         except Exception as e:
             return False, f"Lỗi: {str(e)}"

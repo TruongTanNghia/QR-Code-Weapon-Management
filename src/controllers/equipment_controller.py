@@ -4,8 +4,10 @@ Equipment Controller - Business logic for equipment management
 from typing import List, Optional, Tuple
 from ..models.equipment import Equipment
 from ..models.maintenance_log import MaintenanceLog
+from ..models.database import Database # [QUAN TRỌNG] Import Database để ghi log
 from ..services.qr_service import QRService
 from ..services.export_service import ExportService
+from .user_controller import UserController # [QUAN TRỌNG] Import để lấy user hiện tại
 
 
 class EquipmentController:
@@ -16,16 +18,18 @@ class EquipmentController:
     def __init__(self):
         self.qr_service = QRService()
         self.export_service = ExportService()
+        self.db = Database() # [QUAN TRỌNG] Khởi tạo kết nối DB
     
+    def _get_current_user_info(self):
+        """Hàm tiện ích lấy thông tin người dùng đang thao tác"""
+        user = UserController.get_current_user()
+        if user:
+            return user.id, user.username
+        return None, "Hệ thống"
+
     def create_equipment(self, equipment_data: dict) -> Tuple[bool, str, Optional[Equipment]]:
         """
         Create new equipment with validation
-        
-        Args:
-            equipment_data: Dictionary containing equipment fields
-            
-        Returns:
-            Tuple of (success, message, equipment)
         """
         # Validate required fields
         required_fields = ['name', 'serial_number', 'category']
@@ -46,9 +50,10 @@ class EquipmentController:
             equipment.manufacturer = equipment_data.get('manufacturer', '')
             equipment.manufacture_year = equipment_data.get('manufacture_year')
             equipment.status = equipment_data.get('status', 'Trong kho')
-            equipment.unit = equipment_data.get('unit', '')
+            equipment.unit_id = equipment_data.get('unit_id')
             equipment.location = equipment_data.get('location', '')
             equipment.description = equipment_data.get('description', '')
+            equipment.receive_date = equipment_data.get('receive_date')
             
             equipment.save()
             
@@ -60,6 +65,11 @@ class EquipmentController:
             equipment.qr_code_path = qr_path
             equipment.save()
             
+            # [QUAN TRỌNG] Ghi nhật ký (Audit Log)
+            user_id, username = self._get_current_user_info()
+            log_details = f"Thêm mới trang bị: {equipment.name} (Số hiệu: {equipment.serial_number}, Loại: {equipment.category})"
+            self.db.log_action(user_id, username, "CREATE", "Equipment", equipment.id, log_details)
+            
             return True, f"Đã thêm thiết bị '{equipment.name}'!", equipment
             
         except Exception as e:
@@ -68,13 +78,6 @@ class EquipmentController:
     def update_equipment(self, equipment_id: int, equipment_data: dict) -> Tuple[bool, str]:
         """
         Update existing equipment
-        
-        Args:
-            equipment_id: ID of equipment to update
-            equipment_data: Dictionary containing updated fields
-            
-        Returns:
-            Tuple of (success, message)
         """
         equipment = Equipment.get_by_id(equipment_id)
         if not equipment:
@@ -87,6 +90,9 @@ class EquipmentController:
                 return False, f"Số hiệu '{new_serial}' đã tồn tại!"
         
         try:
+            old_name = equipment.name
+            old_serial = equipment.serial_number
+            
             # Update fields
             equipment.name = equipment_data.get('name', equipment.name)
             equipment.serial_number = new_serial
@@ -94,21 +100,29 @@ class EquipmentController:
             equipment.manufacturer = equipment_data.get('manufacturer', equipment.manufacturer)
             equipment.manufacture_year = equipment_data.get('manufacture_year', equipment.manufacture_year)
             equipment.status = equipment_data.get('status', equipment.status)
-            equipment.unit = equipment_data.get('unit', equipment.unit)
+            equipment.unit_id = equipment_data.get('unit_id', equipment.unit_id)
             equipment.location = equipment_data.get('location', equipment.location)
             equipment.description = equipment_data.get('description', equipment.description)
+            equipment.receive_date = equipment_data.get('receive_date', equipment.receive_date)
             
             equipment.save()
             
             # Regenerate QR if serial changed
-            if new_serial != equipment.serial_number:
-                self.qr_service.delete_qr(equipment_id, equipment.serial_number)
+            if new_serial != old_serial:
+                self.qr_service.delete_qr(equipment_id, old_serial)
                 _, qr_path = self.qr_service.generate_equipment_qr(
                     equipment_id,
                     new_serial
                 )
                 equipment.qr_code_path = qr_path
                 equipment.save()
+            
+            # [QUAN TRỌNG] Ghi nhật ký (Audit Log)
+            user_id, username = self._get_current_user_info()
+            log_details = f"Cập nhật trang bị: {equipment.name} (Số hiệu: {equipment.serial_number})"
+            if new_serial != old_serial:
+                log_details += f" [Đổi số hiệu từ {old_serial} sang {new_serial}]"
+            self.db.log_action(user_id, username, "UPDATE", "Equipment", equipment.id, log_details)
             
             return True, f"Đã cập nhật thiết bị '{equipment.name}'!"
             
@@ -118,12 +132,6 @@ class EquipmentController:
     def delete_equipment(self, equipment_id: int) -> Tuple[bool, str]:
         """
         Delete equipment
-        
-        Args:
-            equipment_id: ID of equipment to delete
-            
-        Returns:
-            Tuple of (success, message)
         """
         equipment = Equipment.get_by_id(equipment_id)
         if not equipment:
@@ -131,12 +139,18 @@ class EquipmentController:
         
         try:
             name = equipment.name
+            serial = equipment.serial_number
             
             # Delete QR code file
             self.qr_service.delete_qr(equipment_id, equipment.serial_number)
             
             # Delete equipment (cascades to maintenance logs)
             equipment.delete()
+            
+            # [QUAN TRỌNG] Ghi nhật ký (Audit Log)
+            user_id, username = self._get_current_user_info()
+            log_details = f"Xóa trang bị: {name} (Số hiệu: {serial})"
+            self.db.log_action(user_id, username, "DELETE", "Equipment", equipment_id, log_details)
             
             return True, f"Đã xóa thiết bị '{name}'!"
             
@@ -150,18 +164,7 @@ class EquipmentController:
         status: str = None,
         limit: int = 500
     ) -> List[Equipment]:
-        """
-        Get filtered equipment list
-        
-        Args:
-            keyword: Search keyword
-            category: Filter by category
-            status: Filter by status
-            limit: Maximum results
-            
-        Returns:
-            List of Equipment objects
-        """
+        """Get filtered equipment list"""
         if keyword:
             results = Equipment.search(keyword)
         elif category:
@@ -171,7 +174,6 @@ class EquipmentController:
         else:
             results = Equipment.get_all(limit=limit)
         
-        # Apply additional filters
         if keyword and category:
             results = [e for e in results if e.category == category]
         if keyword and status:
@@ -182,15 +184,7 @@ class EquipmentController:
         return results
     
     def get_equipment_detail(self, equipment_id: int) -> Tuple[Optional[Equipment], List[MaintenanceLog]]:
-        """
-        Get equipment with maintenance history
-        
-        Args:
-            equipment_id: Equipment ID
-            
-        Returns:
-            Tuple of (equipment, maintenance_logs)
-        """
+        """Get equipment with maintenance history"""
         equipment = Equipment.get_by_id(equipment_id)
         if not equipment:
             return None, []
@@ -199,15 +193,7 @@ class EquipmentController:
         return equipment, logs
     
     def lookup_by_qr(self, qr_data: str) -> Tuple[bool, str, Optional[Equipment]]:
-        """
-        Look up equipment by QR code data
-        
-        Args:
-            qr_data: Raw QR code data string
-            
-        Returns:
-            Tuple of (success, message, equipment)
-        """
+        """Look up equipment by QR code data"""
         decoded = self.qr_service.decode_qr_data(qr_data)
         
         if decoded['type'] == 'equipment':
@@ -222,18 +208,9 @@ class EquipmentController:
             return False, "Lỗi giải mã QR!", None
     
     def export_equipment_list_pdf(self, equipment_list: List[Equipment]) -> Tuple[bool, str]:
-        """
-        Export equipment list to PDF
-        
-        Args:
-            equipment_list: List of equipment to export
-            
-        Returns:
-            Tuple of (success, filepath or error message)
-        """
+        """Export equipment list to PDF"""
         if not equipment_list:
             return False, "Không có dữ liệu để xuất!"
-        
         try:
             filepath = self.export_service.export_equipment_list(equipment_list)
             return True, filepath
@@ -241,18 +218,9 @@ class EquipmentController:
             return False, f"Lỗi xuất file: {str(e)}"
     
     def export_qr_sheet_pdf(self, equipment_list: List[Equipment]) -> Tuple[bool, str]:
-        """
-        Export QR code sheet to PDF
-        
-        Args:
-            equipment_list: List of equipment
-            
-        Returns:
-            Tuple of (success, filepath or error message)
-        """
+        """Export QR code sheet to PDF"""
         if not equipment_list:
             return False, "Không có dữ liệu để xuất!"
-        
         try:
             filepath = self.export_service.export_qr_sheet(equipment_list)
             return True, filepath
@@ -260,21 +228,11 @@ class EquipmentController:
             return False, f"Lỗi xuất file: {str(e)}"
     
     def export_equipment_detail_pdf(self, equipment_id: int) -> Tuple[bool, str]:
-        """
-        Export equipment detail to PDF
-        
-        Args:
-            equipment_id: Equipment ID
-            
-        Returns:
-            Tuple of (success, filepath or error message)
-        """
+        """Export equipment detail to PDF"""
         equipment = Equipment.get_by_id(equipment_id)
         if not equipment:
             return False, "Không tìm thấy thiết bị!"
-        
         logs = MaintenanceLog.get_by_equipment(equipment_id)
-        
         try:
             filepath = self.export_service.export_equipment_detail(equipment, logs)
             return True, filepath

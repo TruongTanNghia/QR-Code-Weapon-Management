@@ -49,7 +49,7 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Categories table (Loại trang bị)
+            # Categories table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS categories (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,7 +62,7 @@ class Database:
                 )
             ''')
             
-            # Units table (Đơn vị)
+            # Units table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS units (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,7 +81,7 @@ class Database:
                 )
             ''')
             
-            # Users table (Người dùng)
+            # Users table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -146,7 +146,7 @@ class Database:
                 )
             ''')
             
-            # Maintenance types table (Loại công việc bảo dưỡng)
+            # Maintenance types table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS maintenance_types (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,7 +159,7 @@ class Database:
                 )
             ''')
             
-            # Loan log table (Quản lý cho mượn)
+            # Loan log table
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS loan_log (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -176,139 +176,90 @@ class Database:
                     FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
                 )
             ''')
-            
-            # Add new columns to equipment table if not exists
-            # receive_date: Ngày cấp phát/nhập kho
-            # loan_status: Trạng thái cho mượn (Đang ở kho / Đã cho mượn)
-            try:
-                cursor.execute('ALTER TABLE equipment ADD COLUMN receive_date TIMESTAMP')
-            except:
-                pass  # Column already exists
-            
-            try:
-                cursor.execute("ALTER TABLE equipment ADD COLUMN loan_status TEXT DEFAULT 'Đang ở kho'")
-            except:
-                pass  # Column already exists
-            
-            # Create indexes for faster queries
+
+            # [MỚI] Audit Logs Table - Bảng ghi nhật ký hệ thống
             cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_units_code 
-                ON units(code)
-            ''')
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_users_username 
-                ON users(username)
-            ''')
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_users_role 
-                ON users(role)
-            ''')
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_equipment_serial 
-                ON equipment(serial_number)
-            ''')
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_equipment_status 
-                ON equipment(status)
-            ''')
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_equipment_unit 
-                ON equipment(unit_id)
-            ''')
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_maintenance_equipment 
-                ON maintenance_log(equipment_id)
+                CREATE TABLE IF NOT EXISTS audit_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    username TEXT,
+                    action TEXT NOT NULL,
+                    target_type TEXT NOT NULL,
+                    target_id INTEGER,
+                    details TEXT,
+                    ip_address TEXT DEFAULT 'localhost',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+                )
             ''')
             
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_loan_equipment 
-                ON loan_log(equipment_id)
-            ''')
+            # Add columns safely
+            try: cursor.execute('ALTER TABLE equipment ADD COLUMN receive_date TIMESTAMP')
+            except: pass
             
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_loan_status 
-                ON loan_log(status)
-            ''')
+            try: cursor.execute("ALTER TABLE equipment ADD COLUMN loan_status TEXT DEFAULT 'Đang ở kho'")
+            except: pass
+            
+            # Create indexes
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_units_code ON units(code)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_equipment_serial ON equipment(serial_number)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_equipment_status ON equipment(status)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_equipment_unit ON equipment(unit_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_maintenance_equipment ON maintenance_log(equipment_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_loan_equipment ON loan_log(equipment_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_loan_status ON loan_log(status)')
+            
+            # [MỚI] Index cho bảng audit để truy vấn nhanh theo thời gian
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_logs(created_at)')
             
             conn.commit()
     
     def execute(self, query: str, params: tuple = ()) -> sqlite3.Cursor:
-        """Execute a single query"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(query, params)
             return cursor
     
     def fetch_one(self, query: str, params: tuple = ()) -> Optional[sqlite3.Row]:
-        """Fetch a single row"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(query, params)
             return cursor.fetchone()
     
     def fetch_all(self, query: str, params: tuple = ()) -> List[sqlite3.Row]:
-        """Fetch all rows"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(query, params)
             return cursor.fetchall()
     
     def insert(self, query: str, params: tuple = ()) -> int:
-        """Insert and return the last row id"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(query, params)
             return cursor.lastrowid
     
     def get_statistics(self) -> dict:
-        """Get database statistics for dashboard"""
         stats = {}
-        
-        # Total equipment count
         row = self.fetch_one("SELECT COUNT(*) as count FROM equipment")
         stats['total_equipment'] = row['count'] if row else 0
         
-        # Equipment by status
-        rows = self.fetch_all('''
-            SELECT status, COUNT(*) as count 
-            FROM equipment 
-            GROUP BY status
-        ''')
+        rows = self.fetch_all("SELECT status, COUNT(*) as count FROM equipment GROUP BY status")
         stats['by_status'] = {row['status']: row['count'] for row in rows}
         
-        # Equipment by category
-        rows = self.fetch_all('''
-            SELECT category, COUNT(*) as count 
-            FROM equipment 
-            GROUP BY category
-        ''')
+        rows = self.fetch_all("SELECT category, COUNT(*) as count FROM equipment GROUP BY category")
         stats['by_category'] = {row['category']: row['count'] for row in rows}
         
-        # Active maintenance count
-        row = self.fetch_one('''
-            SELECT COUNT(*) as count 
-            FROM maintenance_log 
-            WHERE status = 'Đang thực hiện'
-        ''')
+        row = self.fetch_one("SELECT COUNT(*) as count FROM maintenance_log WHERE status = 'Đang thực hiện'")
         stats['active_maintenance'] = row['count'] if row else 0
         
-        # Active loans count
-        row = self.fetch_one('''
-            SELECT COUNT(*) as count 
-            FROM loan_log 
-            WHERE status = 'Đang mượn'
-        ''')
+        row = self.fetch_one("SELECT COUNT(*) as count FROM loan_log WHERE status = 'Đang mượn'")
         stats['active_loans'] = row['count'] if row else 0
         
-        # Equipment by loan_status
-        rows = self.fetch_all('''
-            SELECT loan_status, COUNT(*) as count 
-            FROM equipment 
-            GROUP BY loan_status
-        ''')
+        rows = self.fetch_all("SELECT loan_status, COUNT(*) as count FROM equipment GROUP BY loan_status")
         stats['by_loan_status'] = {row['loan_status']: row['count'] for row in rows}
         
-        # Recent activities
         rows = self.fetch_all('''
             SELECT e.name, m.maintenance_type, m.start_date
             FROM maintenance_log m
@@ -319,3 +270,19 @@ class Database:
         stats['recent_activities'] = [dict(row) for row in rows]
         
         return stats
+
+    # [MỚI] Hàm ghi nhật ký hệ thống chung cho toàn dự án
+    def log_action(self, user_id: Optional[int], username: str, action: str, target_type: str, target_id: Optional[int], details: str):
+        """
+        Ghi lại nhật ký thao tác người dùng.
+        :param action: 'CREATE', 'UPDATE', 'DELETE', 'LOGIN', 'EXPORT'
+        :param target_type: 'Equipment', 'User', 'Maintenance', v.v.
+        """
+        query = '''
+            INSERT INTO audit_logs (user_id, username, action, target_type, target_id, details)
+            VALUES (?, ?, ?, ?, ?, ?)
+        '''
+        try:
+            self.execute(query, (user_id, username, action, target_type, target_id, details))
+        except Exception as e:
+            print(f"Lỗi ghi Audit Log: {e}")
