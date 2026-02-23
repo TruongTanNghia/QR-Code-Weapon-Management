@@ -114,22 +114,20 @@ class MaintenanceHistoryView(QWidget):
         self.table.setShowGrid(True)
         
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)   # ID
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)   # Loại CV
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)   # Ngày BĐ
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)   # Ngày KT
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch) # KTV (Giãn phần còn lại)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)   # Trạng thái
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)   # Thao tác
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)   
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)   
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)   
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)   
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch) 
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)   
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)   
         
-        # [FIX] Cập nhật lại độ rộng cột chuẩn hơn
-        self.table.setColumnWidth(0, 40)  # ID
-        self.table.setColumnWidth(1,220) # Công việc (Giảm chút để nhường chỗ)
-        self.table.setColumnWidth(2, 110) # [FIX] Ngày BĐ: Tăng lên 110px
-        self.table.setColumnWidth(3, 110) # [FIX] Ngày KT: Tăng lên 110px
-        # Cột 4 (KTV) tự giãn
-        self.table.setColumnWidth(5, 110) # Trạng thái
-        self.table.setColumnWidth(6, 160) # Thao tác
+        self.table.setColumnWidth(0, 40)  
+        self.table.setColumnWidth(1,220) 
+        self.table.setColumnWidth(2, 110) 
+        self.table.setColumnWidth(3, 110) 
+        self.table.setColumnWidth(5, 110) 
+        self.table.setColumnWidth(6, 160) 
         
         self.table.doubleClicked.connect(self._on_double_click)
         layout.addWidget(self.table)
@@ -204,7 +202,6 @@ class MaintenanceHistoryView(QWidget):
             end_str = self._format_date_val(log.end_date)
             self.table.setItem(row, 3, QTableWidgetItem(end_str))
             
-            # KTV - Cho phép xuống dòng nếu tên quá dài
             ktv_item = QTableWidgetItem(log.technician_name or "-")
             self.table.setItem(row, 4, ktv_item)
             
@@ -216,7 +213,6 @@ class MaintenanceHistoryView(QWidget):
                 status_item.setForeground(QColor("#FF9800"))
             self.table.setItem(row, 5, status_item)
             
-            # Action Buttons
             action_widget = QWidget()
             action_layout = QHBoxLayout(action_widget)
             action_layout.setContentsMargins(2, 2, 2, 2)
@@ -283,7 +279,14 @@ class MaintenanceHistoryView(QWidget):
                 return
         dialog = MaintenanceDialog(self, self.equipment)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            success, msg, _ = self.controller.create_maintenance_log(self.equipment.id, dialog.get_data_as_dict(), dialog.get_new_equipment_status())
+            # [MỚI] Lấy 4 biến ảnh
+            new_bef, del_bef, new_aft, del_aft = dialog.get_image_data()
+            success, msg, _ = self.controller.create_maintenance_log(
+                self.equipment.id, 
+                dialog.get_data_as_dict(), 
+                dialog.get_new_equipment_status(),
+                new_bef, new_aft
+            )
             if success:
                 self.refresh_data()
                 self.log_updated.emit()
@@ -306,11 +309,14 @@ class MaintenanceHistoryView(QWidget):
                 return
             
             new_equip_status = dialog.get_new_equipment_status()
+            # [MỚI] Lấy 4 biến ảnh
+            new_bef, del_bef, new_aft, del_aft = dialog.get_image_data()
             
             success, msg = self.controller.update_maintenance_log(
                 log.id, 
                 dialog.get_data_as_dict(),
-                new_equip_status
+                new_equip_status,
+                new_bef, del_bef, new_aft, del_aft
             )
             
             if success:
@@ -364,7 +370,6 @@ class MaintenanceListView(QWidget):
         layout.setContentsMargins(30, 30, 30, 30)
         layout.setSpacing(20)
         
-        # [FIX] Thêm Style riêng cho nút phân trang
         self.setStyleSheet(self.styleSheet() + """
             QPushButton#pagingBtn {
                 background-color: palette(base);
@@ -457,7 +462,7 @@ class MaintenanceListView(QWidget):
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch) # KTV
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch) 
         header.setSectionResizeMode(7, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(8, QHeaderView.ResizeMode.Fixed)
         
@@ -482,7 +487,6 @@ class MaintenanceListView(QWidget):
         
         pagination_layout.addStretch()
         
-        # [FIX] Đặt ID "pagingBtn" cho các nút phân trang
         self.first_page_btn = QPushButton("<<")
         self.first_page_btn.setObjectName("pagingBtn")
         self.first_page_btn.setFixedSize(36, 30)
@@ -548,7 +552,6 @@ class MaintenanceListView(QWidget):
         active = len([l for l in logs if l.status == "Đang thực hiện"])
         self.stats_label.setText(f"Tổng: {total} | Đang thực hiện: {active}")
 
-    # [FIX] Helper format date
     def _format_date_val(self, date_val):
         if not date_val: return "-"
         if hasattr(date_val, 'strftime'): return date_val.strftime("%d/%m/%Y")
@@ -667,7 +670,15 @@ class MaintenanceListView(QWidget):
                 QMessageBox.warning(self, "Không có quyền", "Bạn chỉ có quyền xem!")
                 return
             new_equip_status = dialog.get_new_equipment_status()
-            success, msg = self.controller.update_maintenance_log(full_log.id, dialog.get_data_as_dict(), new_equip_status)
+            # [MỚI] Lấy 4 biến ảnh
+            new_bef, del_bef, new_aft, del_aft = dialog.get_image_data()
+            
+            success, msg = self.controller.update_maintenance_log(
+                full_log.id, 
+                dialog.get_data_as_dict(), 
+                new_equip_status,
+                new_bef, del_bef, new_aft, del_aft
+            )
             if success: 
                 self.refresh_data()
                 QMessageBox.information(self, "Thành công", msg)

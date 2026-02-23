@@ -1,7 +1,7 @@
 """
 MaintenanceLog Model - Represents maintenance/repair history
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field # [MỚI] Import field
 from datetime import datetime
 from typing import Optional, List
 from .database import Database
@@ -9,25 +9,26 @@ from .database import Database
 
 @dataclass
 class MaintenanceLog:
-    """
-    Data class representing a maintenance/repair log entry
-    """
+    # ... (giữ nguyên các thuộc tính cũ) ...
     id: Optional[int] = None
     equipment_id: int = 0
-    maintenance_type: str = ""  # Bảo dưỡng định kỳ, Sửa chữa, Kiểm tra, etc.
+    maintenance_type: str = ""
     description: str = ""
-    technician_name: str = ""  # Name of technician
-    technician_id: Optional[int] = None  # Foreign key to users table
-    status: str = "Đang thực hiện"  # Đang thực hiện, Hoàn thành, Tạm dừng
+    technician_name: str = ""
+    technician_id: Optional[int] = None
+    status: str = "Đang thực hiện"
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
     notes: str = ""
     created_at: Optional[datetime] = None
     created_by: Optional[int] = None
     
-    # Related equipment info (populated from joins)
     equipment_name: str = ""
     equipment_serial: str = ""
+    
+    # [MỚI] Tách làm 2 danh sách ảnh
+    images_before: List[str] = field(default_factory=list) 
+    images_after: List[str] = field(default_factory=list)
     
     def __post_init__(self):
         self.db = Database()
@@ -88,9 +89,27 @@ class MaintenanceLog:
         """Delete maintenance log from database"""
         if not self.id:
             return False
+            
+        # [MỚI] Xóa thông tin ảnh khỏi DB trước khi xóa log
+        self.db.execute("DELETE FROM item_images WHERE target_type='Maintenance' AND target_id=?", (self.id,))
+        
         query = "DELETE FROM maintenance_log WHERE id = ?"
         self.db.execute(query, (self.id,))
         return True
+        
+    def load_images(self):
+        """[MỚI] Tải và phân loại ảnh"""
+        if not self.id: return
+        rows = self.db.fetch_all(
+            "SELECT file_path, image_category FROM item_images WHERE target_type='Maintenance' AND target_id=?", 
+            (self.id,)
+        )
+        self.images_before = [row['file_path'] for row in rows if row['image_category'] == 'before']
+        self.images_after = [row['file_path'] for row in rows if row['image_category'] == 'after']
+        
+        # Nếu DB cũ có ảnh 'general', ta gộp vào before tạm
+        general_images = [row['file_path'] for row in rows if row['image_category'] == 'general']
+        self.images_before.extend(general_images)
     
     @classmethod
     def get_by_id(cls, log_id: int) -> Optional['MaintenanceLog']:
@@ -103,7 +122,9 @@ class MaintenanceLog:
             WHERE m.id = ?
         ''', (log_id,))
         if row:
-            return cls._from_row(row)
+            log = cls._from_row(row)
+            log.load_images() # [MỚI]
+            return log
         return None
     
     @classmethod
@@ -117,7 +138,12 @@ class MaintenanceLog:
             WHERE m.equipment_id = ?
             ORDER BY m.start_date DESC
         ''', (equipment_id,))
-        return [cls._from_row(row) for row in rows]
+        logs = []
+        for row in rows:
+            log = cls._from_row(row)
+            log.load_images() # [MỚI]
+            logs.append(log)
+        return logs
     
     @classmethod
     def get_active_by_equipment(cls, equipment_id: int) -> Optional['MaintenanceLog']:
@@ -132,7 +158,9 @@ class MaintenanceLog:
             LIMIT 1
         ''', (equipment_id,))
         if row:
-            return cls._from_row(row)
+            log = cls._from_row(row)
+            log.load_images()
+            return log
         return None
     
     @classmethod
@@ -265,7 +293,6 @@ class MaintenanceLog:
         log.created_at = row['created_at']
         log.created_by = row['created_by'] if 'created_by' in row.keys() else None
         
-        # Equipment info from join
         if 'equipment_name' in row.keys():
             log.equipment_name = row['equipment_name']
         if 'equipment_serial' in row.keys():
@@ -288,12 +315,12 @@ class MaintenanceLog:
             'start_date': str(self.start_date) if self.start_date else None,
             'end_date': str(self.end_date) if self.end_date else None,
             'notes': self.notes,
-            'created_at': str(self.created_at) if self.created_at else None
+            'created_at': str(self.created_at) if self.created_at else None,
+            'images': self.images # [MỚI]
         }
 
 
-# Legacy maintenance type options (kept for backward compatibility)
-# Use get_maintenance_type_names() from maintenance_type.py for dynamic types
+# Legacy maintenance type options
 MAINTENANCE_TYPES = [
     "Bảo dưỡng định kỳ",
     "Sửa chữa",

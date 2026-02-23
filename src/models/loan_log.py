@@ -1,7 +1,7 @@
 """
 LoanLog Model - Represents equipment loan/borrowing history
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, List
 from .database import Database
@@ -27,18 +27,20 @@ class LoanLog:
     equipment_name: str = ""
     equipment_serial: str = ""
     
+    # [MỚI] Danh sách ảnh
+    images_before: List[str] = field(default_factory=list) # Ảnh lúc giao
+    images_after: List[str] = field(default_factory=list)  # Ảnh lúc trả
+    
     def __post_init__(self):
         self.db = Database()
     
     def save(self) -> int:
-        """Save loan log to database (insert or update)"""
         if self.id:
             return self._update()
         else:
             return self._insert()
     
     def _insert(self) -> int:
-        """Insert new loan log"""
         query = '''
             INSERT INTO loan_log 
             (equipment_id, borrower_unit, loan_date, expected_return_date, 
@@ -55,7 +57,6 @@ class LoanLog:
         return self.id
     
     def _update(self) -> int:
-        """Update existing loan log"""
         query = '''
             UPDATE loan_log SET
                 equipment_id = ?, borrower_unit = ?, loan_date = ?,
@@ -71,7 +72,6 @@ class LoanLog:
         return self.id
     
     def complete_return(self, notes: str = "") -> bool:
-        """Mark loan as returned"""
         if not self.id:
             return False
         self.status = "Đã trả"
@@ -82,16 +82,33 @@ class LoanLog:
         return True
     
     def delete(self) -> bool:
-        """Delete loan log from database"""
         if not self.id:
             return False
+            
+        # [MỚI] Xóa thông tin ảnh khỏi DB trước khi xóa log
+        self.db.execute("DELETE FROM item_images WHERE target_type='Loan' AND target_id=?", (self.id,))
+        
         query = "DELETE FROM loan_log WHERE id = ?"
         self.db.execute(query, (self.id,))
         return True
+        
+    def load_images(self):
+        """[MỚI] Tải và phân loại ảnh từ Database"""
+        if not self.id:
+            return
+        rows = self.db.fetch_all(
+            "SELECT file_path, image_category FROM item_images WHERE target_type='Loan' AND target_id=?", 
+            (self.id,)
+        )
+        self.images_before = [row['file_path'] for row in rows if row['image_category'] == 'before']
+        self.images_after = [row['file_path'] for row in rows if row['image_category'] == 'after']
+        
+        # Backward compatibility cho DB cũ nếu có
+        general_images = [row['file_path'] for row in rows if row['image_category'] == 'general']
+        self.images_before.extend(general_images)
     
     @classmethod
     def get_by_id(cls, log_id: int) -> Optional['LoanLog']:
-        """Get loan log by ID"""
         db = Database()
         row = db.fetch_one('''
             SELECT l.*, e.name as equipment_name, e.serial_number as equipment_serial
@@ -100,12 +117,13 @@ class LoanLog:
             WHERE l.id = ?
         ''', (log_id,))
         if row:
-            return cls._from_row(row)
+            log = cls._from_row(row)
+            log.load_images()
+            return log
         return None
     
     @classmethod
     def get_by_equipment(cls, equipment_id: int) -> List['LoanLog']:
-        """Get all loan logs for an equipment"""
         db = Database()
         rows = db.fetch_all('''
             SELECT l.*, e.name as equipment_name, e.serial_number as equipment_serial
@@ -114,11 +132,15 @@ class LoanLog:
             WHERE l.equipment_id = ?
             ORDER BY l.loan_date DESC
         ''', (equipment_id,))
-        return [cls._from_row(row) for row in rows]
+        logs = []
+        for row in rows:
+            log = cls._from_row(row)
+            log.load_images()
+            logs.append(log)
+        return logs
     
     @classmethod
     def get_active_by_equipment(cls, equipment_id: int) -> Optional['LoanLog']:
-        """Get active (ongoing) loan for an equipment, returns None if no active loan"""
         db = Database()
         row = db.fetch_one('''
             SELECT l.*, e.name as equipment_name, e.serial_number as equipment_serial
@@ -129,12 +151,13 @@ class LoanLog:
             LIMIT 1
         ''', (equipment_id,))
         if row:
-            return cls._from_row(row)
+            log = cls._from_row(row)
+            log.load_images()
+            return log
         return None
     
     @classmethod
     def get_active(cls) -> List['LoanLog']:
-        """Get all active (ongoing) loans"""
         db = Database()
         rows = db.fetch_all('''
             SELECT l.*, e.name as equipment_name, e.serial_number as equipment_serial
@@ -147,7 +170,6 @@ class LoanLog:
     
     @classmethod
     def get_all(cls, limit: int = 100, offset: int = 0) -> List['LoanLog']:
-        """Get all loan logs with pagination"""
         db = Database()
         rows = db.fetch_all('''
             SELECT l.*, e.name as equipment_name, e.serial_number as equipment_serial
@@ -160,7 +182,6 @@ class LoanLog:
     
     @classmethod
     def get_recent(cls, limit: int = 10) -> List['LoanLog']:
-        """Get recent loan logs"""
         db = Database()
         rows = db.fetch_all('''
             SELECT l.*, e.name as equipment_name, e.serial_number as equipment_serial
@@ -173,7 +194,6 @@ class LoanLog:
     
     @classmethod
     def get_by_date_range(cls, start_date, end_date=None) -> List['LoanLog']:
-        """Get loan logs within a date range"""
         db = Database()
         start_str = start_date.strftime('%Y-%m-%d')
         if end_date:
@@ -197,7 +217,6 @@ class LoanLog:
     
     @classmethod
     def get_by_equipment_and_date(cls, equipment_id: int, start_date=None, end_date=None) -> List['LoanLog']:
-        """Get loan logs for equipment within optional date range"""
         db = Database()
         if start_date and end_date:
             start_str = start_date.strftime('%Y-%m-%d')
@@ -224,7 +243,6 @@ class LoanLog:
     
     @classmethod
     def count_active(cls) -> int:
-        """Count active loans"""
         db = Database()
         row = db.fetch_one(
             "SELECT COUNT(*) as count FROM loan_log WHERE status = 'Đang mượn'"
@@ -233,7 +251,6 @@ class LoanLog:
     
     @classmethod
     def _from_row(cls, row) -> 'LoanLog':
-        """Create LoanLog instance from database row"""
         log = cls()
         log.id = row['id']
         log.equipment_id = row['equipment_id']
@@ -246,7 +263,6 @@ class LoanLog:
         log.created_at = row['created_at']
         log.created_by = row['created_by'] if 'created_by' in row.keys() else None
         
-        # Equipment info from join
         if 'equipment_name' in row.keys():
             log.equipment_name = row['equipment_name']
         if 'equipment_serial' in row.keys():
@@ -255,7 +271,6 @@ class LoanLog:
         return log
     
     def to_dict(self) -> dict:
-        """Convert to dictionary"""
         return {
             'id': self.id,
             'equipment_id': self.equipment_id,
@@ -267,7 +282,9 @@ class LoanLog:
             'return_date': str(self.return_date) if self.return_date else None,
             'status': self.status,
             'notes': self.notes,
-            'created_at': str(self.created_at) if self.created_at else None
+            'created_at': str(self.created_at) if self.created_at else None,
+            'images_before': self.images_before,
+            'images_after': self.images_after
         }
 
 

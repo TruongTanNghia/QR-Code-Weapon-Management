@@ -5,12 +5,12 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QPushButton, QFrame, QGroupBox, QTableWidget,
     QTableWidgetItem, QHeaderView, QScrollArea, QWidget,
-    QTabWidget, QMessageBox, QFileDialog # [MỚI] Import QFileDialog
+    QTabWidget, QMessageBox
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal # [MỚI] Import pyqtSignal
 from PyQt6.QtGui import QFont, QPixmap, QColor
-from datetime import datetime
 import io
+import os # [MỚI]
 
 from ..models.equipment import Equipment
 from ..models.maintenance_log import MaintenanceLog
@@ -19,6 +19,63 @@ from ..services.qr_service import QRService
 from ..services.export_service import ExportService
 from .maintenance_view import MaintenanceHistoryView
 from .loan_view import LoanHistoryView
+from ..config import DATA_DIR # [MỚI] Import thư mục gốc để lấy ảnh
+
+
+# --- [MỚI] CLASS HỖ TRỢ CLICK VÀO ẢNH ---
+class ClickableLabel(QLabel):
+    clicked = pyqtSignal()
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+# --- [MỚI] HỘP THOẠI XEM ẢNH PHÓNG TO ---
+class ImageViewerDialog(QDialog):
+    def __init__(self, image_path, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Xem hình ảnh minh chứng")
+        self.setMinimumSize(900, 700)
+        self.setModal(True)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background-color: #333; }")
+        
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setStyleSheet("background-color: #333;")
+        
+        pixmap = QPixmap(str(image_path))
+        if not pixmap.isNull():
+            # Scale ảnh cho lớn nhưng không làm méo/vỡ tỉ lệ
+            scaled_pixmap = pixmap.scaled(
+                1200, 800, 
+                Qt.AspectRatioMode.KeepAspectRatio, 
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.image_label.setPixmap(scaled_pixmap)
+        else:
+            self.image_label.setText("Lỗi: Không thể tải hình ảnh.")
+            self.image_label.setStyleSheet("color: white;")
+            
+        scroll.setWidget(self.image_label)
+        layout.addWidget(scroll)
+        
+        close_btn = QPushButton("Đóng")
+        close_btn.setFixedSize(100, 35)
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.clicked.connect(self.accept)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        btn_layout.addWidget(close_btn)
+        btn_layout.addStretch()
+        
+        layout.addLayout(btn_layout)
 
 
 class EquipmentDetailDialog(QDialog):
@@ -38,9 +95,7 @@ class EquipmentDetailDialog(QDialog):
     def _setup_ui(self):
         """Setup dialog UI"""
         self.setWindowTitle(f"Chi tiết: {self.equipment.name}")
-        
-        # Giảm chiều cao tối thiểu từ 700 xuống 500 để bớt khoảng trắng
-        self.setMinimumSize(1000, 600) 
+        self.setMinimumSize(1000, 650) 
         self.setModal(True)
         
         layout = QVBoxLayout(self)
@@ -142,6 +197,52 @@ class EquipmentDetailDialog(QDialog):
             form_layout.addRow(label_widget, value_label)
         
         details_layout.addWidget(details_group)
+        
+        # --- [MỚI] KHU VỰC HIỂN THỊ HÌNH ẢNH TRONG TAB THÔNG TIN ---
+        image_group = QGroupBox("Hình ảnh thiết bị")
+        image_layout = QHBoxLayout(image_group)
+        image_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        
+        if hasattr(self.equipment, 'images') and self.equipment.images:
+            has_valid_image = False
+            for img_path in self.equipment.images:
+                full_path = DATA_DIR / img_path
+                if full_path.exists():
+                    has_valid_image = True
+                    
+                    # Tạo Label có thể click
+                    lbl = ClickableLabel()
+                    lbl.setFixedSize(120, 120)
+                    lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+                    lbl.setStyleSheet("""
+                        QLabel { border: 2px solid #ddd; border-radius: 4px; background-color: #f9f9f9; }
+                        QLabel:hover { border: 2px solid #1976D2; }
+                    """)
+                    
+                    pixmap = QPixmap(str(full_path)).scaled(
+                        116, 116, 
+                        Qt.AspectRatioMode.KeepAspectRatio, 
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                    lbl.setPixmap(pixmap)
+                    lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    lbl.setToolTip("Click để phóng to ảnh")
+                    
+                    # Kết nối sự kiện click mở ảnh to
+                    lbl.clicked.connect(lambda p=full_path: self._show_full_image(p))
+                    
+                    image_layout.addWidget(lbl)
+            
+            if not has_valid_image:
+                image_layout.addWidget(QLabel("Các file ảnh không còn tồn tại trên ổ cứng."))
+        else:
+            no_img_label = QLabel("Chưa có hình ảnh đính kèm.")
+            no_img_label.setStyleSheet("color: #888; font-style: italic;")
+            image_layout.addWidget(no_img_label)
+            
+        details_layout.addWidget(image_group)
+        # --------------------------------------------------------
+        
         details_layout.addStretch()
         tab_widget.addTab(details_tab, "📋 Thông tin")
         
@@ -171,6 +272,11 @@ class EquipmentDetailDialog(QDialog):
         button_layout.addWidget(close_btn)
         
         layout.addLayout(button_layout)
+    
+    # [MỚI] Hàm mở dialog xem ảnh to
+    def _show_full_image(self, image_path):
+        dialog = ImageViewerDialog(image_path, self)
+        dialog.exec()
     
     def _update_status_color(self):
         if self.equipment.status in ["Cấp 1", "Cấp 2"]:
@@ -222,36 +328,19 @@ class EquipmentDetailDialog(QDialog):
                 break
     
     def _export_detail(self):
-        """[FIX] Cho phép người dùng chọn nơi lưu file"""
-        # Tạo tên file gợi ý
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_name = f"ho_so_{self.equipment.serial_number}_{timestamp}.pdf"
-        
-        # Mở hộp thoại Save As
-        filename, _ = QFileDialog.getSaveFileName(
-            self,
-            "Lưu hồ sơ thiết bị",
-            default_name,
-            "PDF Files (*.pdf)"
-        )
-        
-        if filename:
-            try:
-                maintenance_logs = MaintenanceLog.get_by_equipment(self.equipment.id)
-                loan_logs = LoanLog.get_by_equipment(self.equipment.id)
-                
-                filepath = self.export_service.export_equipment_detail(
-                    self.equipment, maintenance_logs, loan_logs,
-                    save_path=filename # Truyền đường dẫn vào service
-                )
-                
-                reply = QMessageBox.information(
-                    self, "Thành công",
-                    f"Đã xuất hồ sơ PDF!\n\nĐường dẫn: {filepath}",
-                    QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Ok
-                )
-                if reply == QMessageBox.StandardButton.Open:
-                    import os
-                    os.startfile(filepath)
-            except Exception as e:
-                QMessageBox.critical(self, "Lỗi", f"Không thể xuất file: {str(e)}")
+        try:
+            maintenance_logs = MaintenanceLog.get_by_equipment(self.equipment.id)
+            loan_logs = LoanLog.get_by_equipment(self.equipment.id)
+            filepath = self.export_service.export_equipment_detail(
+                self.equipment, maintenance_logs, loan_logs
+            )
+            reply = QMessageBox.information(
+                self, "Thành công",
+                f"Đã xuất hồ sơ PDF!\n\nĐường dẫn: {filepath}",
+                QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Ok
+            )
+            if reply == QMessageBox.StandardButton.Open:
+                import os
+                os.startfile(filepath)
+        except Exception as e:
+            QMessageBox.critical(self, "Lỗi", f"Không thể xuất file: {str(e)}")

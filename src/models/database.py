@@ -193,6 +193,21 @@ class Database:
                 )
             ''')
             
+            # [MỚI] Bảng lưu trữ đường dẫn Hình ảnh cho toàn hệ thống
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS item_images (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    target_type TEXT NOT NULL, 
+                    target_id INTEGER NOT NULL, 
+                    image_category TEXT DEFAULT 'general', -- [MỚI] 'before', 'after', 'general'
+                    file_path TEXT NOT NULL,    
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            # [MỚI] Lệnh an toàn để nâng cấp DB cũ chưa có cột image_category
+            try: cursor.execute("ALTER TABLE item_images ADD COLUMN image_category TEXT DEFAULT 'general'")
+            except: pass
+            
             # Add columns safely
             try: cursor.execute('ALTER TABLE equipment ADD COLUMN receive_date TIMESTAMP')
             except: pass
@@ -211,8 +226,10 @@ class Database:
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_loan_equipment ON loan_log(equipment_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_loan_status ON loan_log(status)')
             
-            # [MỚI] Index cho bảng audit để truy vấn nhanh theo thời gian
+            # Index cho bảng audit
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_logs(created_at)')
+            # [MỚI] Index cho ảnh để tải nhanh
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_images_target ON item_images(target_type, target_id)')
             
             conn.commit()
     
@@ -271,7 +288,7 @@ class Database:
         
         return stats
 
-    # [MỚI] Hàm ghi nhật ký hệ thống chung cho toàn dự án
+    # Hàm ghi nhật ký hệ thống chung cho toàn dự án
     def log_action(self, user_id: Optional[int], username: str, action: str, target_type: str, target_id: Optional[int], details: str):
         """
         Ghi lại nhật ký thao tác người dùng.

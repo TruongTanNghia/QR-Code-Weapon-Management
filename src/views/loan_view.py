@@ -277,15 +277,19 @@ class LoanHistoryView(QWidget):
             if not valid:
                 QMessageBox.warning(self, "Lỗi", error_msg)
                 return
-            
+
+            # [MỚI] Lấy danh sách ảnh lúc tạo
+            new_bef, del_bef, new_aft, del_aft = dialog.get_image_data()
+
             success, msg, _ = self.controller.create_loan(
                 self.equipment.id, 
-                dialog.get_loan_data()
+                dialog.get_loan_data(),
+                images_before=new_bef
             )
             if success:
                 self.equipment = Equipment.get_by_id(self.equipment.id)
                 self.refresh_data()
-                self.log_updated.emit()
+                if hasattr(self, 'log_updated'): self.log_updated.emit()
                 QMessageBox.information(self, "Thành công", msg)
             else:
                 QMessageBox.warning(self, "Lỗi", msg)
@@ -293,33 +297,40 @@ class LoanHistoryView(QWidget):
     def _edit_loan(self, loan):
         current_user = UserController.get_current_user()
         is_viewer = current_user and current_user.role == UserRole.VIEWER
-        
+
+        if not hasattr(self, 'equipment') or not self.equipment:
+            self.equipment = Equipment.get_by_id(loan.equipment_id)
+
         loan = LoanLog.get_by_id(loan.id)
         if not loan: return
         dialog = LoanDialog(self, self.equipment, loan)
         result = dialog.exec()
-        
+
         if result == QDialog.DialogCode.Accepted:
-            # Chặn lưu nếu là Viewer
             if is_viewer:
                 QMessageBox.warning(self, "Không có quyền", "Bạn chỉ có quyền xem, không thể chỉnh sửa!")
                 return
-                
+
             data = dialog.get_loan_data()
-            
+
+            # [MỚI] Lấy 4 cục ảnh
+            new_bef, del_bef, new_aft, del_aft = dialog.get_image_data()
+
             if data.get('status') == "Đã trả" and loan.status != "Đã trả":
                 success, msg = self.controller.return_equipment(
-                    loan.id, 
-                    data.get('notes', ''),
-                    data.get('return_date')
+                    loan.id, data.get('notes', ''), data.get('return_date'),
+                    images_after=new_aft
                 )
             else:
-                success, msg = self.controller.update_loan(loan.id, data)
-            
+                success, msg = self.controller.update_loan(
+                    loan.id, data,
+                    new_bef, del_bef, new_aft, del_aft
+                )
+
             if success:
                 self.equipment = Equipment.get_by_id(self.equipment.id)
                 self.refresh_data()
-                self.log_updated.emit()
+                if hasattr(self, 'log_updated'): self.log_updated.emit()
                 QMessageBox.information(self, "Thành công", msg)
             else:
                 QMessageBox.warning(self, "Lỗi", msg)
@@ -331,7 +342,7 @@ class LoanHistoryView(QWidget):
             if success:
                 self.equipment = Equipment.get_by_id(self.equipment.id)
                 self.refresh_data()
-                self.log_updated.emit()
+                if hasattr(self, 'log_updated'): self.log_updated.emit()
 
     def _quick_return(self, loan):
         reply = QMessageBox.question(
@@ -579,27 +590,40 @@ class LoanListView(QWidget):
     def _view_loan(self, loan):
         current_user = UserController.get_current_user()
         is_viewer = current_user and current_user.role == UserRole.VIEWER
-        
-        equipment = Equipment.get_by_id(loan.equipment_id)
+
+        if not hasattr(self, 'equipment') or not self.equipment:
+            self.equipment = Equipment.get_by_id(loan.equipment_id)
+
         loan = LoanLog.get_by_id(loan.id)
         if not loan: return
-            
-        dialog = LoanDialog(self, equipment, loan)
+        dialog = LoanDialog(self, self.equipment, loan)
         result = dialog.exec()
-        
+
         if result == QDialog.DialogCode.Accepted:
             if is_viewer:
-                QMessageBox.warning(self, "Không có quyền", "Bạn chỉ có quyền xem!")
+                QMessageBox.warning(self, "Không có quyền", "Bạn chỉ có quyền xem, không thể chỉnh sửa!")
                 return
-                
+
             data = dialog.get_loan_data()
+
+            # [MỚI] Lấy 4 cục ảnh
+            new_bef, del_bef, new_aft, del_aft = dialog.get_image_data()
+
             if data.get('status') == "Đã trả" and loan.status != "Đã trả":
-                success, msg = self.controller.return_equipment(loan.id, data.get('notes', ''), data.get('return_date'))
+                success, msg = self.controller.return_equipment(
+                    loan.id, data.get('notes', ''), data.get('return_date'),
+                    images_after=new_aft
+                )
             else:
-                success, msg = self.controller.update_loan(loan.id, data)
-            
+                success, msg = self.controller.update_loan(
+                    loan.id, data,
+                    new_bef, del_bef, new_aft, del_aft
+                )
+
             if success:
+                self.equipment = Equipment.get_by_id(self.equipment.id)
                 self.refresh_data()
+                if hasattr(self, 'log_updated'): self.log_updated.emit()
                 QMessageBox.information(self, "Thành công", msg)
             else:
                 QMessageBox.warning(self, "Lỗi", msg)

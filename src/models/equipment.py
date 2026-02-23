@@ -31,6 +31,7 @@ class Equipment:
     
     # Transient fields (not stored in DB directly)
     unit_name: str = ""  # For display purposes
+    images: List[str] = field(default_factory=list) # [MỚI] Danh sách đường dẫn ảnh
     
     def __post_init__(self):
         self.db = Database()
@@ -83,9 +84,23 @@ class Equipment:
         """Delete equipment from database"""
         if not self.id:
             return False
+            
+        # [MỚI] Xóa luôn các ảnh liên kết trong DB (xóa vật lý file sẽ làm ở Controller)
+        self.db.execute("DELETE FROM item_images WHERE target_type='Equipment' AND target_id=?", (self.id,))
+        
         query = "DELETE FROM equipment WHERE id = ?"
         self.db.execute(query, (self.id,))
         return True
+    
+    def load_images(self):
+        """[MỚI] Tải danh sách đường dẫn ảnh từ Database"""
+        if not self.id:
+            return
+        rows = self.db.fetch_all(
+            "SELECT file_path FROM item_images WHERE target_type='Equipment' AND target_id=?", 
+            (self.id,)
+        )
+        self.images = [row['file_path'] for row in rows]
     
     @classmethod
     def get_by_id(cls, equipment_id: int) -> Optional['Equipment']:
@@ -98,7 +113,9 @@ class Equipment:
             WHERE e.id = ?
         ''', (equipment_id,))
         if row:
-            return cls._from_row(row)
+            equip = cls._from_row(row)
+            equip.load_images() # [MỚI] Tự động tải ảnh khi xem chi tiết
+            return equip
         return None
     
     @classmethod
@@ -110,7 +127,9 @@ class Equipment:
             (serial_number,)
         )
         if row:
-            return cls._from_row(row)
+            equip = cls._from_row(row)
+            equip.load_images() # [MỚI] Tự động tải ảnh khi xem chi tiết
+            return equip
         return None
     
     @classmethod
@@ -177,7 +196,7 @@ class Equipment:
     
     @classmethod
     def get_by_date_range(cls, start_date: datetime, end_date: datetime) -> List['Equipment']:
-        """[MỚI] Get equipment by receive date range"""
+        """Get equipment by receive date range"""
         db = Database()
         rows = db.fetch_all('''
             SELECT e.*, u.name as unit_name 
@@ -288,5 +307,6 @@ class Equipment:
             'receive_date': str(self.receive_date) if self.receive_date else None,
             'loan_status': self.loan_status,
             'created_at': str(self.created_at) if self.created_at else None,
-            'updated_at': str(self.updated_at) if self.updated_at else None
+            'updated_at': str(self.updated_at) if self.updated_at else None,
+            'images': self.images # [MỚI] Xuất list ảnh khi gọi dict
         }

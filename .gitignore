@@ -108,6 +108,7 @@ venv.bak/
 
 # Project specific
 data/*.db
+data/images/*
 data/qr_codes/*
 data/exports/*
 !data/.gitkeep
